@@ -4,7 +4,7 @@
 \usepackage[utf8]{inputenc}
 \usepackage[T1]{fontenc}
 \usepackage{graphicx}
-\usepackage{amsmath,amssymb}
+\usepackage{amsmath,amssymb,amsthm}
 \usepackage{geometry}
 \usepackage{booktabs}
 \usepackage{hyperref}
@@ -14,6 +14,10 @@
 \geometry{margin=1in}
 \setlength{\parskip}{0.5em}
 \setlength{\parindent}{0pt}
+
+\newtheorem{proposition}{Proposition}
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\norm}[1]{\lVert #1 \rVert}
 
 % Document information
 \title{
@@ -52,26 +56,388 @@
 
 \subsection{Problem Overview}
 
+An online retailer wants to show each customer ten products that match their
+interests. We build a recommendation model that learns customer preferences
+and product representations from real reviews and product descriptions. Given
+a customer's observed history, the model scores every candidate product and
+returns the ten with the highest scores.
+
+The model is a hybrid: each product is represented both by a vector learned
+from interactions and by a fixed text vector computed from its title and
+description. The text part lets the model score a \emph{cold} product, one
+that has a description but no training interactions, which a purely
+interaction-based model cannot do.
+
+The question we study is not which model is best but how the training
+algorithm affects the recommendations. The same model, objective, data and
+starting point are trained with four methods: mini-batch stochastic gradient
+descent (SGD), sharpness-aware minimization (SAM)~\cite{sam}, SGD with a
+sharpness-aware learning rate (SALR)~\cite{salr}, and block coordinate descent
+(BCD).
+
 \subsection{Project Objectives}
+
+\begin{enumerate}
+    \item Formulate the hybrid model and its regularized pairwise objective,
+    derive its gradients, and characterize its convexity.
+    \item Implement SGD, SAM, SALR and BCD on a common model interface, with
+    all gradient work counted in the same unit.
+    \item Select one regularization pair shared by all methods, tune each
+    method, and select checkpoints using ordinary-validation results only.
+    \item Compare the methods on recommendation quality for held-out
+    interactions, on optimization progress, on variability across three
+    seeds, and on computational cost.
+    \item Evaluate the same fitted models, without retraining, on products
+    that have no training interactions.
+\end{enumerate}
 
 \subsection{Report Organization}
 
+Section~\ref{sec:data} describes the supplied data.
+Section~\ref{sec:math} states the model and objective and gives the gradient
+derivations and the convexity analysis.
+Section~\ref{sec:methods} describes the four training methods.
+Section~\ref{sec:protocol} gives the evaluation metrics and the selection,
+tuning and cost-measurement protocol.
+Section~\ref{sec:results} reports the two experiments, and
+Sections~\ref{sec:discussion} and~\ref{sec:conclusion} discuss the findings
+and their limitations.
+
 % ------------------------------------
 \section{Dataset Description}
+\label{sec:data}
 % ------------------------------------
+
+The data are an instructor-prepared subset of the Amazon Reviews 2023
+dataset~\cite{amazon2023}, drawn from the Sports and Outdoors category and
+focused on outdoor recreation equipment. They contain reviews and product
+descriptions for 170 customers and 286 products. We use the supplied features,
+splits and triplets unchanged.
+
+\paragraph{Ratings.} A rating is an integer from 1 to 5. A rating of 4 or 5 is
+a positive interaction. Ratings of 1 to 3 remain part of the customer's
+observed history but are not positive examples, and an unreviewed product is
+unknown, not a confirmed dislike. Of the 1{,}897 training reviews, 1{,}812 are
+positive.
+
+\paragraph{Text features.} Each product $i$ has a fixed vector
+$z_i \in \R^{384}$ with unit Euclidean norm, encoding its title and
+description with the all-MiniLM-L6-v2 sentence encoder~\cite{minilm}. These
+vectors are inputs: the encoder is neither trained nor modified. Sixty-three
+products have a title but an empty description; their vectors are supplied
+like all others.
+
+\paragraph{Product groups.} The catalog is split into three disjoint groups
+(Table~\ref{tab:catalogs}). Cold products appear in no training review and in
+no training comparison.
+
+\begin{table}[H]
+\centering
+\caption{Product groups in the supplied catalog.}
+\label{tab:catalogs}
+\begin{tabular}{lrl}
+\toprule
+Group & Products & Role \\
+\midrule
+Ordinary & 206 & Have training interactions \\
+Cold-validation & 40 & No training interactions; used during development \\
+Cold-test & 40 & No training interactions; reserved for the final evaluation \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Splits.} Training reviews define the customer histories and contain
+only ordinary products; every customer has between 8 and 31 of them.
+Validation reviews are used to choose hyperparameters and checkpoints, and
+test reviews only to assess the selected models
+(Table~\ref{tab:splits}).
+
+\begin{table}[H]
+\centering
+\caption{Reviews in each split, by product group.}
+\label{tab:splits}
+\begin{tabular}{lrrr}
+\toprule
+Split & Reviews & On ordinary products & On cold products \\
+\midrule
+Training & 1{,}897 & 1{,}897 & 0 \\
+Validation & 358 & 129 & 229 \\
+Test & 362 & 120 & 242 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Training comparisons.} A triplet $\tau = (u, i, j)$ contains a
+customer $u$, an ordinary product $i$ that $u$ rated positively in training,
+and an ordinary product $j$ that $u$ did not review in training. The supplied
+set $\mathcal{T}$ has $N = 5{,}436$ triplets: three comparisons with distinct
+unreviewed products for each of the 1{,}812 positive training reviews. A
+further 121 held-out triplets are used only to report validation loss.
+
+\paragraph{Evaluation customers.} Relevant products are those a customer rated
+4 or 5 in the split being evaluated. The supplied relevant sets cover 121
+validation and 110 test customers for ordinary recommendation, and 119
+validation and 114 test customers for cold-start recommendation.
+
+\paragraph{Loading.} Our loader reads the eight supplied files without
+altering them and checks them against the rules above before any training:
+identifier ranges, unit-norm text vectors, the three-way catalog split, the
+absence of cold products from training, and the validity of every triplet and
+relevant set. A file that violates a rule stops the run instead of having rows
+dropped.
 
 % ------------------------------------
 \section{Mathematical Formulation}
+\label{sec:math}
 % ------------------------------------
 
 \subsection{Recommendation Model}
+
+For customer $u$ and product $i$, the product representation $v_i$ and the
+recommendation score $s_{ui}$ are
+\begin{equation}
+    v_i = q_i + W z_i, \qquad
+    s_{ui} = b_i + p_u^\top v_i = b_i + p_u^\top (q_i + W z_i).
+    \label{eq:score}
+\end{equation}
+Here $p_u \in \R^k$ is the customer's preference vector, $q_i \in \R^k$ is
+product-specific information learned from interactions, $b_i \in \R$ is a
+product bias shared across customers, $z_i \in \R^{384}$ is the fixed text
+vector, and $W \in \R^{k \times 384}$ maps text features into the preference
+space. We use $k = 32$ throughout. A higher score places the product higher in
+that customer's ranking; the score is neither a predicted rating nor a
+probability.
+
+Let $P \in \R^{170 \times k}$ and $Q \in \R^{206 \times k}$ hold the customer
+and ordinary-product vectors as rows and $b \in \R^{206}$ the biases. The
+trainable parameters are $\theta = (P, Q, W, b)$, in total
+$170 \cdot 32 + 206 \cdot 32 + 32 \cdot 384 + 206 = 24{,}526$ values.
+
+A cold product has no learned vector or bias. We set $q_i = 0$ and $b_i = 0$,
+so that
+\begin{equation}
+    s_{ui}^{\mathrm{cold}} = p_u^\top W z_i .
+    \label{eq:cold}
+\end{equation}
+No untrained parameters are allocated for cold products, and there is no
+customer-only bias, since it would cancel when comparing two products for the
+same customer.
+
 \subsection{Objective Function}
+
+For a triplet $\tau = (u, i, j)$ the intended ordering is $s_{ui} > s_{uj}$.
+With the score difference $\Delta_{uij}$, the pairwise logistic
+loss~\cite{bpr} is
+\begin{equation}
+    \Delta_{uij} = s_{ui} - s_{uj}, \qquad
+    \ell_{uij}(\theta) = \log\bigl(1 + \exp(-\Delta_{uij})\bigr).
+    \label{eq:loss}
+\end{equation}
+The loss decreases as the positive product moves above its comparison product,
+equals $\log 2$ at a tie, and grows linearly when the order is reversed.
+
+For a mini-batch $B \subseteq \mathcal{T}$ let
+$L_B(\theta) = |B|^{-1} \sum_{\tau \in B} \ell_\tau(\theta)$, and define
+$L_{\mathcal{T}}$ in the same way over all training triplets. The optimization
+problem is
+\begin{equation}
+    \min_{P, Q, W, b} \; F(\theta) = L_{\mathcal{T}}(\theta)
+    + \frac{\lambda_f}{2}\bigl(\norm{P}_F^2 + \norm{Q}_F^2 + \norm{b}_2^2\bigr)
+    + \frac{\lambda_w}{2}\norm{W}_F^2,
+    \qquad \lambda_f, \lambda_w > 0 .
+    \label{eq:objective}
+\end{equation}
+The first term rewards correct rankings. The two penalties discourage large
+parameters that may overfit the training comparisons, with separate strengths
+for the customer and product parameters and for the text transformation. We
+write $F_B$ for the same expression with $L_B$ in place of $L_{\mathcal{T}}$.
+
 \subsection{Gradient Derivations}
+
+Let $\sigma(x) = 1/(1 + e^{-x})$. Differentiating \eqref{eq:loss} with respect
+to the score difference gives
+\begin{equation}
+    \frac{\partial \ell_{uij}}{\partial \Delta_{uij}}
+    = -\frac{e^{-\Delta_{uij}}}{1 + e^{-\Delta_{uij}}}
+    = -\sigma(-\Delta_{uij}) =: -e_{uij},
+    \label{eq:dldelta}
+\end{equation}
+where $e_{uij} \in (0, 1)$ is large when the pair is ranked wrongly and close
+to zero when the positive product is far ahead. From \eqref{eq:score},
+\[
+    \Delta_{uij} = b_i - b_j + p_u^\top (q_i - q_j) + p_u^\top W (z_i - z_j),
+\]
+so $\Delta_{uij}$ depends on $p_u$, $q_i$, $q_j$, $W$, $b_i$ and $b_j$ only,
+with
+\[
+    \frac{\partial \Delta}{\partial p_u} = v_i - v_j, \quad
+    \frac{\partial \Delta}{\partial q_i} = p_u, \quad
+    \frac{\partial \Delta}{\partial q_j} = -p_u, \quad
+    \frac{\partial \Delta}{\partial W} = p_u (z_i - z_j)^\top, \quad
+    \frac{\partial \Delta}{\partial b_i} = 1, \quad
+    \frac{\partial \Delta}{\partial b_j} = -1 .
+\]
+The chain rule with \eqref{eq:dldelta} gives the gradients of one triplet:
+\begin{align}
+    \nabla_{p_u} \ell_{uij} &= -e_{uij}\,(v_i - v_j), \label{eq:gp}\\
+    \nabla_{q_i} \ell_{uij} &= -e_{uij}\,p_u, &
+    \nabla_{q_j} \ell_{uij} &= +e_{uij}\,p_u, \label{eq:gq}\\
+    \nabla_{W} \ell_{uij} &= -e_{uij}\,p_u (z_i - z_j)^\top, \label{eq:gw}\\
+    \frac{\partial \ell_{uij}}{\partial b_i} &= -e_{uij}, &
+    \frac{\partial \ell_{uij}}{\partial b_j} &= +e_{uij}. \label{eq:gb}
+\end{align}
+All other parameters have zero gradient for this triplet. Each update moves
+$p_u$ towards $v_i$ and away from $v_j$, moves $q_i$ towards $p_u$ and $q_j$
+away from it, and raises $b_i$ while lowering $b_j$, in proportion to how
+wrongly the pair is currently ranked.
+
+\paragraph{Mini-batch and regularization.} The gradient of $L_B$ is the
+average of \eqref{eq:gp}--\eqref{eq:gb} over the batch. A row of $P$, $Q$ or
+$b$ accumulates one term for each triplet of the batch in which it appears,
+and $W$ accumulates a term from every triplet. Adding the gradient of the
+penalty in \eqref{eq:objective},
+\begin{align}
+    \nabla_{p_u} F_B &= -\frac{1}{|B|}\sum_{(u,i,j) \in B} e_{uij}\,(v_i - v_j)
+        + \lambda_f\, p_u, \\
+    \nabla_{q_m} F_B &= -\frac{1}{|B|}\Bigl(\sum_{(u,m,j) \in B} e_{umj}\,p_u
+        - \sum_{(u,i,m) \in B} e_{uim}\,p_u\Bigr) + \lambda_f\, q_m, \\
+    \frac{\partial F_B}{\partial b_m} &= -\frac{1}{|B|}\Bigl(\sum_{(u,m,j) \in B} e_{umj}
+        - \sum_{(u,i,m) \in B} e_{uim}\Bigr) + \lambda_f\, b_m, \\
+    \nabla_{W} F_B &= -\frac{1}{|B|}\sum_{(u,i,j) \in B} e_{uij}\,p_u (z_i - z_j)^\top
+        + \lambda_w\, W .
+\end{align}
+The penalty gradient is applied to every learned parameter at every step, not
+only to the rows that appear in the batch. Under uniform sampling of batches
+this makes $\nabla F_B$ an unbiased estimate of $\nabla F$; shrinking only the
+rows in the batch would instead weight each row's penalty by how often it is
+sampled and so change the objective.
+
+\paragraph{Implementation and verification.} The gradients are implemented
+directly from these formulas with array operations and no automatic
+differentiation. The term $e_{uij}$ is evaluated as
+$\exp(-\log(1 + e^{\Delta_{uij}}))$ with a stable $\log(1 + e^x)$, so large
+score differences cannot overflow. We verified the implementation against
+central finite differences on 60 randomly chosen entries of each of $P$, $Q$,
+$W$ and $b$, on a batch of 256 triplets and at parameters far from the
+initial point; all agree to a relative tolerance of $10^{-5}$.
+
 \subsection{Convexity Analysis}
+
+\begin{proposition}[Joint non-convexity]
+$F$ is not jointly convex in $(P, Q, W, b)$ in general.
+\end{proposition}
+
+\begin{proof}
+The score difference contains the products $p_u^\top q_i$ and $p_u^\top W
+z_i$ of two sets of variables, so it is bilinear, not affine, in $\theta$.
+Consider the origin $\theta = 0$ and a direction $d = (\delta P, \delta Q,
+\delta W, 0)$. Along $t d$ the biases stay at zero and
+$\Delta_\tau(t d) = t^2 \kappa_\tau(d)$ with
+$\kappa_\tau(d) = \delta p_u^\top\bigl(\delta q_i - \delta q_j
++ \delta W (z_i - z_j)\bigr)$.
+Since $\log(1 + e^{-x}) = \log 2 - x/2 + O(x^2)$,
+\begin{equation}
+    F(t d) = \log 2 + t^2 \Bigl[ -\frac{1}{2N}\sum_{\tau \in \mathcal{T}} \kappa_\tau(d)
+    + \frac{\lambda_f}{2}\bigl(\norm{\delta P}_F^2 + \norm{\delta Q}_F^2\bigr)
+    + \frac{\lambda_w}{2}\norm{\delta W}_F^2 \Bigr] + O(t^4).
+    \label{eq:curvature}
+\end{equation}
+Take a unit vector $x \in \R^k$, and set $\delta P = a x^\top$ and
+$\delta Q = c x^\top$ with unit vectors $a \in \R^{170}$, $c \in \R^{206}$
+and $\delta W = 0$. Then $\sum_\tau \kappa_\tau(d) = a^\top C c$, where
+$C_{um}$ counts the triplets in which customer $u$ has product $m$ as the
+positive item minus those in which it is the comparison item. Choosing $a$
+and $c$ as the leading singular vectors of $C$, the bracket in
+\eqref{eq:curvature} equals $\lambda_f - \sigma_{\max}(C)/(2N)$. The curvature
+of $F$ along $d$ at the origin is therefore negative whenever
+\begin{equation}
+    \lambda_f < \frac{\sigma_{\max}(C)}{2N},
+    \label{eq:threshold-f}
+\end{equation}
+and a function with negative curvature along a line is not convex.
+\end{proof}
+
+The same argument with $\delta P = a x^\top$ and $\delta W = x w^\top$ gives
+negative curvature whenever
+$\sqrt{\lambda_f \lambda_w} < \sigma_{\max}(D)/(2N)$, where row $u$ of $D$ is
+$\sum_{(u,i,j) \in \mathcal{T}} (z_i - z_j)^\top$. For the supplied triplets,
+$\sigma_{\max}(C) = 30.35$ and $\sigma_{\max}(D) = 50.29$, so $F$ is
+non-convex at the origin whenever $\lambda_f < 2.79 \times 10^{-3}$ or
+$\sqrt{\lambda_f \lambda_w} < 4.63 \times 10^{-3}$. We confirmed both
+thresholds numerically with second differences of $F$ along these directions.
+The origin matters in practice because the prescribed initial point is close
+to it.
+
+Two remarks qualify this result. First, the non-convexity comes from the model
+and not from the loss: $\theta = (P, Q, W, b)$ and $(-P, -Q, -W, b)$ give the
+same scores and the same value of $F$, while their midpoint $(0, 0, 0, b)$
+has no personalization at all. Whenever personalization lowers the objective,
+the midpoint is worse than both end points, which convexity forbids. Second,
+the non-convexity is not unconditional. The Hessian of $L_{\mathcal{T}}$ is
+bounded below by $-\sqrt{6}\, I$, because $|\partial \ell / \partial \Delta|
+< 1$ and the constant Hessian of each $\Delta_\tau$ has spectral norm at most
+$\sqrt{6}$ for unit-norm $z_i$. Hence $F$ is jointly convex when
+$\min(\lambda_f, \lambda_w) \ge \sqrt{6}$, but such penalties are hundreds of
+times larger than useful values and force all parameters towards zero.
+
+\begin{proposition}[Block convexity]
+For $\lambda_f, \lambda_w > 0$:
+\begin{enumerate}
+    \item with $(Q, W, b)$ fixed, $F$ is $\lambda_f$-strongly convex in $P$;
+    \item with $P$ fixed, $F$ is strongly convex in $(Q, W, b)$ with modulus
+    $\min(\lambda_f, \lambda_w)$.
+\end{enumerate}
+\end{proposition}
+
+\begin{proof}
+The function $x \mapsto \log(1 + e^{-x})$ is convex, since its second
+derivative $\sigma(x)\sigma(-x)$ is positive.
+
+(1) With $(Q, W, b)$ fixed, every $v_i$ and $b_i$ is a constant, and
+$\Delta_{uij} = (v_i - v_j)^\top p_u + (b_i - b_j)$ is affine in $P$. A convex
+function of an affine map is convex, and so is an average of convex functions,
+so $L_{\mathcal{T}}$ is convex in $P$. Adding $\tfrac{\lambda_f}{2}\norm{P}_F^2$
+makes $F$ $\lambda_f$-strongly convex in $P$; the remaining penalty terms are
+constants.
+
+(2) With $P$ fixed,
+$\Delta_{uij} = b_i - b_j + p_u^\top q_i - p_u^\top q_j
++ \langle W, p_u (z_i - z_j)^\top \rangle$ is linear in $(Q, W, b)$. The same
+argument shows that $L_{\mathcal{T}}$ is convex in $(Q, W, b)$, and the
+penalty $\tfrac{\lambda_f}{2}(\norm{Q}_F^2 + \norm{b}_2^2)
++ \tfrac{\lambda_w}{2}\norm{W}_F^2$ makes $F$ strongly convex with modulus
+$\min(\lambda_f, \lambda_w)$.
+\end{proof}
+
+In the first block the problem also separates across customers: each $p_u$
+solves its own $k$-dimensional regularized logistic regression, with the
+differences $v_i - v_j$ as features.
+
+\paragraph{Role of positive regularization.} Without the penalties the block
+problems are convex but can fail to have a unique minimizer, or any minimizer:
+\begin{itemize}
+    \item \emph{Flat directions.} Adding the same constant to every $b_i$
+    leaves all $\Delta_{uij}$ unchanged, as does changing $W$ in any direction
+    orthogonal to all matrices $p_u (z_i - z_j)^\top$, so minimizers are never
+    unique.
+    \item \emph{No minimizer.} If the comparisons of a block can all be ranked
+    correctly, the logistic loss can be driven towards zero only by letting
+    the parameters grow without bound, so the infimum is not attained.
+\end{itemize}
+With $\lambda_f, \lambda_w > 0$ each block problem is strongly convex. It has
+exactly one minimizer, which is finite, and gradient-based block solvers
+converge to it at a linear rate. This is what makes the alternating scheme of
+BCD well defined: each block update is the approximate solution of a problem
+with a unique answer, even though the joint problem is non-convex and the
+alternation is only guaranteed to reach a stationary point.
+
 \subsection{Parameter Initialization}
+% TODO (Nour): what happens under all-zero initialization, and the prescribed
+% N(0, 0.01^2) initialization with b = 0 and seeds 616, 617, 618.
 
 % ------------------------------------
 \section{Optimization Methods}
+\label{sec:methods}
 % ------------------------------------
 
 \subsection{Stochastic Gradient Descent (SGD)}
@@ -81,6 +447,7 @@
 
 % ------------------------------------
 \section{Experimental Methodology}
+\label{sec:protocol}
 % ------------------------------------
 
 \subsection{Evaluation Metrics}
@@ -90,6 +457,7 @@
 
 % ------------------------------------
 \section{Experimental Results}
+\label{sec:results}
 % ------------------------------------
 
 \subsection{Experiment 1: Generalization Performance}
@@ -98,10 +466,12 @@
 
 % ------------------------------------
 \section{Discussion}
+\label{sec:discussion}
 % ------------------------------------
 
 % ------------------------------------
 \section{Conclusion}
+\label{sec:conclusion}
 % ------------------------------------
 
 % ------------------------------------
@@ -114,6 +484,12 @@
 \bibitem{amazon2023}
 McAuley Lab,
 \textit{Amazon Reviews 2023}.
+\url{https://amazon-reviews-2023.github.io/main.html}
+
+\bibitem{minilm}
+Sentence Transformers,
+\textit{all-MiniLM-L6-v2}.
+\url{https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2}
 
 \bibitem{bpr}
 S. Rendle et al.,

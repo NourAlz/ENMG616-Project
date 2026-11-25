@@ -105,3 +105,34 @@ def test_large_scores_stay_finite(ds):
     params = {name: 1e3 * value for name, value in random_params(ds).items()}
     loss, grads = loss_and_grad(params, ds, ds.train_triplets, LAMBDA_F, LAMBDA_W)
     assert np.isfinite(loss) and all(np.isfinite(g).all() for g in grads.values())
+
+
+def test_objective_is_not_convex_near_the_origin(ds):
+    """Reproduces the report's thresholds: F has negative curvature at the origin
+    when lambda_f < sigma_max(C) / 2N or sqrt(lambda_f lambda_w) < sigma_max(D) / 2N."""
+    users, positives, comparisons = ds.train_triplets.T
+    n = len(users)
+    C = np.zeros((ds.n_users, ds.n_ordinary))
+    np.add.at(C, (users, ds.q_index[positives]), 1.0)
+    np.add.at(C, (users, ds.q_index[comparisons]), -1.0)
+    D = np.zeros((ds.n_users, ds.Z.shape[1]))
+    np.add.at(D, users, ds.Z[positives] - ds.Z[comparisons])
+    (a_c, s_c, c_t), (a_d, s_d, w_t) = (np.linalg.svd(M, full_matrices=False) for M in (C, D))
+    assert s_c[0] / (2 * n) == pytest.approx(2.79e-3, rel=5e-3)
+    assert s_d[0] / (2 * n) == pytest.approx(4.63e-3, rel=5e-3)
+
+    x = np.eye(32)[0]
+    zero = {name: np.zeros_like(value) for name, value in init_params(ds, 0).items()}
+    directions = [
+        ({"P": np.outer(a_c[:, 0], x), "Q": np.outer(c_t[0], x)}, s_c[0] / (2 * n)),
+        ({"P": np.outer(a_d[:, 0], x), "W": np.outer(x, w_t[0])}, s_d[0] / (2 * n)),
+    ]
+    for direction, threshold in directions:
+        for lam, sign in ((0.5 * threshold, -1), (2.0 * threshold, 1)):
+            values = [
+                loss_and_grad(
+                    {k: zero[k] + t * direction.get(k, 0.0) for k in zero}, ds, ds.train_triplets, lam, lam
+                )[0]
+                for t in (-1e-2, 0.0, 1e-2)
+            ]
+            assert np.sign(values[0] + values[2] - 2 * values[1]) == sign
