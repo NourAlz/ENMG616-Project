@@ -12,7 +12,7 @@ Identifiers
 * ``q_index[product_id]`` is the row of ``Q`` and ``b`` for an ordinary
   product, and -1 for a cold product (meaning ``q_i = b_i = 0``).
 
-Run ``python -m recsys.data`` to print a summary of the loaded data.
+Run ``python -m recommender.data`` to print a summary of the loaded data.
 """
 
 from __future__ import annotations

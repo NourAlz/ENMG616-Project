@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from recsys.data import DATA_DIR, DataError, load_dataset
+from recommender.data import DATA_DIR, DataError, load_dataset
 
 
 @pytest.fixture(scope="module")
