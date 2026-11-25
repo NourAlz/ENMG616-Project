@@ -1,0 +1,138 @@
+\documentclass[12pt,a4paper]{article}
+
+% Packages
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{graphicx}
+\usepackage{amsmath,amssymb}
+\usepackage{geometry}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{float}
+
+% Page layout
+\geometry{margin=1in}
+\setlength{\parskip}{0.5em}
+\setlength{\parindent}{0pt}
+
+% Document information
+\title{
+    \textbf{Personalized Product Recommendation}\\[0.3cm]
+    \large Representation Learning, Optimization, and Generalization\\[0.5cm]
+    \normalsize ENMG 616 -- Advanced Optimization
+}
+
+\author{
+    \textbf{Mohamed Moslemani}\\
+    MSc in Computational Science\\
+    \and
+    \textbf{Nour Harajli}\\
+    MSc in Computational Science
+}
+
+\date{
+    American University of Beirut\\
+    Faculty of Arts and Sciences\\[0.3cm]
+    Fall 2026
+}
+
+\begin{document}
+
+% Title page
+\maketitle
+\thispagestyle{empty}
+
+\newpage
+\tableofcontents
+\newpage
+
+% ------------------------------------
+\section{Introduction}
+% ------------------------------------
+
+\subsection{Problem Overview}
+
+\subsection{Project Objectives}
+
+\subsection{Report Organization}
+
+% ------------------------------------
+\section{Dataset Description}
+% ------------------------------------
+
+% ------------------------------------
+\section{Mathematical Formulation}
+% ------------------------------------
+
+\subsection{Recommendation Model}
+\subsection{Objective Function}
+\subsection{Gradient Derivations}
+\subsection{Convexity Analysis}
+\subsection{Parameter Initialization}
+
+% ------------------------------------
+\section{Optimization Methods}
+% ------------------------------------
+
+\subsection{Stochastic Gradient Descent (SGD)}
+\subsection{Sharpness-Aware Minimization (SAM)}
+\subsection{Sharpness-Aware Learning Rate (SALR)}
+\subsection{Block Coordinate Descent (BCD)}
+
+% ------------------------------------
+\section{Experimental Methodology}
+% ------------------------------------
+
+\subsection{Evaluation Metrics}
+\subsection{Regularization Selection}
+\subsection{Hyperparameter Tuning}
+\subsection{Computational Cost Measurement}
+
+% ------------------------------------
+\section{Experimental Results}
+% ------------------------------------
+
+\subsection{Experiment 1: Generalization Performance}
+\subsection{Experiment 2: Cold-Start Recommendation}
+\subsection{Comparison of Optimization Methods}
+
+% ------------------------------------
+\section{Discussion}
+% ------------------------------------
+
+% ------------------------------------
+\section{Conclusion}
+% ------------------------------------
+
+% ------------------------------------
+\section{Team Contributions}
+% ------------------------------------
+
+% ------------------------------------
+\begin{thebibliography}{9}
+
+\bibitem{amazon2023}
+McAuley Lab,
+\textit{Amazon Reviews 2023}.
+
+\bibitem{bpr}
+S. Rendle et al.,
+\textit{BPR: Bayesian Personalized Ranking
+from Implicit Feedback},
+UAI, 2009.
+
+\bibitem{sam}
+P. Foret et al.,
+\textit{Sharpness-Aware Minimization
+for Efficiently Improving Generalization},
+ICLR, 2021.
+
+\bibitem{salr}
+X. Yue et al.,
+\textit{SALR: Sharpness-aware Learning Rate
+Scheduler for Improved Generalization},
+2021.
+
+\end{thebibliography}
+
+\end{document}
