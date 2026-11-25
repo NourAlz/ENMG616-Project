@@ -1,0 +1,16 @@
+[project]
+name = "enmg616-project2"
+version = "0.1.0"
+description = "ENMG 616 Project 2: personalized product recommendation"
+requires-python = ">=3.12"
+dependencies = [
+    "numpy",
+    "pandas",
+]
+
+[dependency-groups]
+dev = ["pytest"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
