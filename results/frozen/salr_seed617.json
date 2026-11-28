@@ -1,0 +1,22 @@
+{
+  "optimizer": "salr",
+  "seed": 617,
+  "config": {
+    "base_lr": 16.0,
+    "probe_step": 0.05,
+    "lambda_f": 0.001,
+    "lambda_w": 0.001,
+    "n_descent": 1,
+    "n_ascent": 1,
+    "probe_every": 1,
+    "batch_size": 256
+  },
+  "status": "ok",
+  "work": 860168,
+  "updates": 3481,
+  "train_time": 8.452923546997567,
+  "train_loss": 0.23778833899017893,
+  "val_loss": 0.5322557701037542,
+  "val_ndcg": 0.14132158269174713,
+  "val_recall": 0.23140495867768596
+}

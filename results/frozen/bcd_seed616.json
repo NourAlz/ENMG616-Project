@@ -1,0 +1,22 @@
+{
+  "optimizer": "bcd",
+  "seed": 616,
+  "config": {
+    "lambda_f": 0.001,
+    "lambda_w": 0.001,
+    "inner_tol": 0.0001,
+    "max_inner": 1,
+    "init_step": 1.0,
+    "max_step": 10000.0,
+    "armijo": 0.0001,
+    "max_backtracks": 40
+  },
+  "status": "converged",
+  "work": 141336,
+  "updates": 26,
+  "train_time": 0.856537019999962,
+  "train_loss": 0.326466079799312,
+  "val_loss": 0.5651266763928542,
+  "val_ndcg": 0.1376397577150434,
+  "val_recall": 0.256198347107438
+}
